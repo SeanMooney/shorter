@@ -75,9 +75,8 @@ impl<'r> rocket::request::FromRequest<'r> for HeaderGuard {
 
 #[get("/")]
 fn index(header_guard: HeaderGuard) -> String {
-    dbg!(&header_guard.headers);
     let headers = header_guard.headers;
-    let mut host = headers.get("x-forwarded-for");
+    let mut host = headers.get("x-forwarded-host");
     let mut port = headers.get("x-forwarded-port");
     let mut proto = headers.get("x-forwarded-proto");
     let localhost = "127.0.0.1".to_string();
