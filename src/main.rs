@@ -3,7 +3,7 @@ extern crate rocket;
 
 mod paste_id;
 
-use std::io;
+use std::{io, string};
 
 use rocket::fairing::AdHoc;
 use rocket::serde::{de, Deserialize};
@@ -19,25 +19,31 @@ use tera::Tera;
 
 use paste_id::PasteId;
 
-// In a real application, these would be retrieved dynamically from a config.
-const HOST: Absolute<'static> = uri!("http://localhost:8000");
-const ID_LENGTH: usize = 5;
+const ID_LENGTH: usize = 6;
 
 async fn unique_id() -> PasteId<'static> {
-    let mut id = PasteId::new(ID_LENGTH);
+    let mut size = 3;
+    let mut id = PasteId::new(size);
     while fs::try_exists(id.file_path())
         .await.unwrap(){
-        id = PasteId::new(ID_LENGTH);
+        if size < ID_LENGTH {
+            size += 1;
+        }
+        id = PasteId::new(size);
         }
     id
 }
 
 #[post("/", data = "<paste>")]
-async fn upload(paste: Data<'_>) -> io::Result<String> {
+async fn upload(header_guard: HeaderGuard, paste: Data<'_>) -> io::Result<String> {
+    let headers = header_guard.headers;
+    let (proto, host, port) = get_proto_host_port(&headers);
     let id = unique_id().await;
     dbg!(id.file_path());
     paste.open(128.kibibytes()).into_file(id.file_path()).await?;
-    Ok(uri!(HOST, retrieve(id)).to_string() + "\n")
+    let base: String = format!("{}://{}:{}", proto, host, port);
+    let base_url: Absolute<'_> = Absolute::parse_owned(base).unwrap();
+    Ok(uri!(base_url, retrieve(id)).to_string() + "\n")
 }
 
 #[get("/<id>")]
@@ -73,9 +79,7 @@ impl<'r> rocket::request::FromRequest<'r> for HeaderGuard {
     }
 }
 
-#[get("/")]
-fn index(header_guard: HeaderGuard) -> String {
-    let headers = header_guard.headers;
+fn get_proto_host_port(headers: &Headers) -> (String, String, String) {
     let mut host = headers.get("x-forwarded-host");
     let mut port = headers.get("x-forwarded-port");
     let mut proto = headers.get("x-forwarded-proto");
@@ -84,16 +88,27 @@ fn index(header_guard: HeaderGuard) -> String {
     let default_proto = "http".to_string();
     let empty = "".to_string();
     let https = "https".to_string();
-    if host.is_none(){
+    if host.is_none() {
         host = Some(&localhost);
     }
-    if port.is_none(){
+    if port.is_none() {
         port = Some(&default_port);
     }
-    if proto.is_none(){
+    if proto.is_none() {
         proto = Some(&default_proto);
     }
+    (
+        proto.unwrap().to_string(),
+        host.unwrap().to_string(),
+        port.unwrap().to_string(),
+    )
+}
 
+
+#[get("/")]
+fn index(header_guard: HeaderGuard) -> String {
+    let headers = header_guard.headers;
+    let (proto, host, port) = get_proto_host_port(&headers);
     let template =
     "
     USAGE
